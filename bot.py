@@ -4,7 +4,7 @@ import os
 import threading
 import time
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import httpx
 from telegram import Update
@@ -53,6 +53,8 @@ def init_db():
                  (id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, amount TEXT, description TEXT, category TEXT, type TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS insights
                  (id INTEGER PRIMARY KEY, user_id INTEGER, type TEXT, description TEXT, suggestion TEXT, timestamp TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS reminders
+                 (id INTEGER PRIMARY KEY, user_id INTEGER, message TEXT, send_at TEXT, sent INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
 
@@ -67,7 +69,7 @@ def db_save_history(user_id: int, role: str, content: str):
 def db_load_history(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT role, content FROM history WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,))
+    c.execute("SELECT role, content FROM history WHERE user_id=? ORDER BY id DESC LIMIT 30", (user_id,))
     rows = c.fetchall()
     conn.close()
     return [{"role": r[0], "content": str(r[1])} for r in reversed(rows)]
@@ -112,7 +114,31 @@ def db_save_insight(user_id: int, insight: dict):
     conn.commit()
     conn.close()
 
-# ========== Google Sheets (גיבוי בלבד) ==========
+def db_save_reminder(user_id: int, message: str, send_at: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO reminders (user_id, message, send_at, sent) VALUES (?,?,?,0)",
+              (user_id, message, send_at))
+    conn.commit()
+    conn.close()
+
+def db_get_pending_reminders():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    c.execute("SELECT id, user_id, message FROM reminders WHERE sent=0 AND send_at <= ?", (now,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def db_mark_reminder_sent(reminder_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE reminders SET sent=1 WHERE id=?", (reminder_id,))
+    conn.commit()
+    conn.close()
+
+# ========== Google Sheets גיבוי ==========
 try:
     credentials_path = f"/etc/secrets/{GOOGLE_CREDENTIALS_FILE}" if os.path.exists(f"/etc/secrets/{GOOGLE_CREDENTIALS_FILE}") else GOOGLE_CREDENTIALS_FILE
     scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -122,6 +148,47 @@ try:
 except:
     SHEETS_ENABLED = False
     print("Google Sheets not available - using SQLite only")
+
+def restore_from_sheets():
+    if not SHEETS_ENABLED or not SHEET_ID:
+        return
+    print("Restoring history from Sheets...")
+    try:
+        sh = gc.open_by_key(SHEET_ID)
+        worksheets = sh.worksheets()
+        for ws in worksheets:
+            title = ws.title
+            if title.startswith("History_"):
+                try:
+                    user_id = int(title.replace("History_", ""))
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute("SELECT COUNT(*) FROM history WHERE user_id=?", (user_id,))
+                    count = c.fetchone()[0]
+                    if count == 0:
+                        records = ws.get_all_records()
+                        rows = [(user_id, str(r.get("Role", r.get("תפקיד", ""))), str(r.get("Content", r.get("תוכן", ""))), str(r.get("Date", r.get("תאריך", "")))) for r in records if r.get("Content") or r.get("תוכן")]
+                        c.executemany("INSERT INTO history (user_id, role, content, timestamp) VALUES (?,?,?,?)", rows)
+                        conn.commit()
+                        print(f"Restored {len(rows)} messages for user {user_id}")
+                    conn.close()
+                except Exception as e:
+                    print(f"Restore error {title}: {e}")
+            elif title.startswith("Profile_"):
+                try:
+                    user_id = int(title.replace("Profile_", ""))
+                    goal = ws.cell(2, 1).value or ""
+                    if goal:
+                        conn = sqlite3.connect(DB_PATH)
+                        c = conn.cursor()
+                        c.execute("INSERT OR IGNORE INTO goals (user_id, goal) VALUES (?,?)", (user_id, goal))
+                        conn.commit()
+                        conn.close()
+                except Exception as e:
+                    print(f"Goal restore error {title}: {e}")
+    except Exception as e:
+        print(f"Restore error: {e}")
+    print("Restore complete.")
 
 def backup_to_sheets(user_id: int, role: str, content: str):
     if not SHEETS_ENABLED or not SHEET_ID:
@@ -181,13 +248,18 @@ Respond in the same language the user writes in
 ========== User Personal Goal ==========
 {user_goal}
 
+========== Dynamic Reminders ==========
+When the user asks to send a reminder at a specific time — identify the request and return:
+REMINDER:{{"message":"reminder content","time":"HH:MM","date":"DD/MM/YYYY"}}
+If no date specified — use today's date.
+After returning the REMINDER — confirm to the user that it was saved.
+
 ========== Advanced Agent Capabilities ==========
-Learn from every conversation and improve recommendations:
-Identify recurring spending patterns
-Identify problematic categories based on history
-Improve investment recommendations based on past performance
-Adapt budget based on seasonality
-Identify when the user overspends more
+Learn from every conversation and improve recommendations.
+Identify recurring spending patterns.
+Identify problematic categories based on history.
+Improve investment recommendations based on past performance.
+Adapt budget based on seasonality.
 
 ========== Goal Calculation ==========
 Calculate total accumulation from all sources:
@@ -204,10 +276,10 @@ For each asset: FV = PV x (1 + r)^n + PMT x [((1 + r)^n - 1) / r]
 Step A — Goal:
 1. What amount do you want to save?
 2. By when?
-3. Why? (apartment, emergency, retirement, business, other)
+3. Why?
 
-Step B — Existing Assets:
-4. Do you own property? (value + mortgage)
+Step B — Assets:
+4. Do you own property?
 5. Pension fund: balance + monthly contribution?
 6. Education fund: balance + monthly contribution?
 7. Investment savings fund: balance + monthly contribution?
@@ -243,31 +315,42 @@ Be direct, brief, strict. No markdown signs."""
 
 user_data = {}
 
-def call_mistral(messages: list) -> str:
-    try:
-        resp = httpx.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"},
-            json={
-                "model": "mistral-large-latest",
-                "messages": messages,
-                "max_tokens": 1500
-            },
-            timeout=30
-        )
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("retry-after", 60))
-            return f"Token limit reached. Please try again in {retry_after} seconds."
-        if resp.status_code != 200:
-            print(f"MISTRAL ERROR: {resp.status_code} {resp.text[:200]}")
+def call_mistral(messages: list, retries: int = 3) -> str:
+    for attempt in range(retries):
+        try:
+            resp = httpx.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"},
+                json={
+                    "model": "mistral-small-latest",
+                    "messages": messages,
+                    "max_tokens": 1000
+                },
+                timeout=60
+            )
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("retry-after", 30))
+                time.sleep(retry_after)
+                continue
+            if resp.status_code != 200:
+                if attempt < retries - 1:
+                    time.sleep(2)
+                    continue
+                return "Temporary issue. Please try again."
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except httpx.TimeoutException:
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+            return "Request took too long. Please try again."
+        except Exception as e:
+            print(f"ERROR: {e}")
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
             return "Temporary issue. Please try again."
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-    except httpx.TimeoutException:
-        return "Request took too long. Please try again."
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return "Temporary issue. Please try again."
+    return "Temporary issue. Please try again."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -315,7 +398,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_goal=goal if goal else "No goal set yet — ask the user about their financial goal"
     )
 
-    messages = [{"role": "system", "content": system_prompt}] + user_data[user_id]["history"][-10:]
+    messages = [{"role": "system", "content": system_prompt}] + user_data[user_id]["history"][-20:]
     reply = call_mistral(messages)
 
     if "GOAL:" in reply:
@@ -328,6 +411,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply = reply.replace(goal_match.group(0), "").strip()
         except:
             pass
+
+    reminder_match = re.search(r'REMINDER:(\{.*?\})', reply, re.DOTALL)
+    if reminder_match:
+        try:
+            reminder = json.loads(reminder_match.group(1))
+            msg = reminder.get("message", "")
+            time_str = reminder.get("time", "")
+            date_str = reminder.get("date", datetime.now().strftime("%d/%m/%Y"))
+            send_at = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %H:%M").strftime("%Y-%m-%d %H:%M")
+            db_save_reminder(user_id, msg, send_at)
+            reply = reply.replace(reminder_match.group(0), "").strip()
+            reply += f"\n\nReminder saved — I will send it to you at {time_str}."
+        except Exception as e:
+            print(f"Reminder parse error: {e}")
+            reply = reply.replace(reminder_match.group(0), "").strip()
 
     match = re.search(r'TRANSACTION:(\{.*?\})', reply, re.DOTALL)
     if match:
@@ -385,6 +483,18 @@ async def monthly_report(context):
         except Exception as e:
             print(f"Report error: {e}")
 
+async def check_dynamic_reminders(context):
+    try:
+        reminders = db_get_pending_reminders()
+        for reminder_id, user_id, message in reminders:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"Reminder: {message}"
+            )
+            db_mark_reminder_sent(reminder_id)
+    except Exception as e:
+        print(f"Dynamic reminder error: {e}")
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -398,6 +508,7 @@ def run_server():
 
 if __name__ == "__main__":
     init_db()
+    restore_from_sheets()
     threading.Thread(target=run_server, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -405,5 +516,6 @@ if __name__ == "__main__":
     job_queue = app.job_queue
     job_queue.run_daily(daily_reminder, time=datetime.strptime("17:00", "%H:%M").time())
     job_queue.run_monthly(monthly_report, when=datetime.strptime("09:00", "%H:%M").time(), day=1)
+    job_queue.run_repeating(check_dynamic_reminders, interval=60, first=10)
     print("✅ Bot is running!")
     app.run_polling(drop_pending_updates=True)
