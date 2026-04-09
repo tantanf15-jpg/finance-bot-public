@@ -1,0 +1,5 @@
+python-telegram-bot[job-queue]
+httpx
+gspread
+google-auth
+python-dotenv
