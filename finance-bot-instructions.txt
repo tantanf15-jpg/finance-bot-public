@@ -1,0 +1,294 @@
+================================================================
+         FINANCE BOT — SETUP & DEPLOYMENT INSTRUCTIONS
+================================================================
+
+WHAT IS THIS?
+-------------
+A Telegram bot powered by Mistral AI that acts as a personal
+financial advisor. It tracks expenses, plans budgets, and helps
+you reach your financial goals.
+
+
+================================================================
+PART 1 — PREREQUISITES
+================================================================
+
+Before you start, make sure you have:
+- Python 3.9 or higher installed
+- A Telegram account
+- A Google account
+- A GitHub account
+
+
+================================================================
+PART 2 — CREATE TELEGRAM BOT
+================================================================
+
+1. Open Telegram
+2. Search for @BotFather
+3. Send: /newbot
+4. Enter a display name (e.g. MyFinanceBot)
+5. Enter a username ending with "bot" (e.g. my_finance_123_bot)
+6. Copy the token you receive — looks like: 123456789:ABCdef...
+7. IMPORTANT: Never share this token publicly
+
+
+================================================================
+PART 3 — GET MISTRAL API KEY
+================================================================
+
+1. Go to: https://console.mistral.ai
+2. Sign up or log in
+3. Click "API Keys" in the left menu
+4. Click "Create new key"
+5. Copy the key
+6. IMPORTANT: Never share this key publicly
+
+
+================================================================
+PART 4 — SET UP GOOGLE SHEETS & CREDENTIALS
+================================================================
+
+Step 1 — Create Google Cloud Project:
+1. Go to: https://console.cloud.google.com
+2. Click "Create Project"
+3. Give it a name (e.g. FinanceBot)
+4. Click "Create"
+
+Step 2 — Enable APIs:
+1. Go to: APIs & Services > Enable APIs
+2. Search "Google Sheets API" > Enable
+3. Search "Google Drive API" > Enable
+
+Step 3 — Create Service Account:
+1. Go to: APIs & Services > Credentials
+2. Click "Create Credentials" > "Service Account"
+3. Enter a name > Click "Done"
+4. Click on the Service Account you created
+5. Go to "Keys" tab > "Add Key" > "JSON"
+6. A JSON file will download automatically
+7. Rename it to: credentials.json
+
+Step 4 — Create Google Sheet:
+1. Go to: https://sheets.google.com
+2. Create a new spreadsheet
+3. Name it: Finance Bot
+4. Open credentials.json in Notepad
+5. Find the field: "client_email"
+6. Copy that email address
+7. In Google Sheets, click "Share"
+8. Paste the email > set role to "Editor" > Send
+9. Copy the Sheet ID from the URL:
+   https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit
+   The Sheet ID is the long string between /d/ and /edit
+
+
+================================================================
+PART 5 — INSTALL & CONFIGURE
+================================================================
+
+Step 1 — Clone the repository:
+   git clone https://github.com/YOUR_USERNAME/finance-bot-public.git
+   cd finance-bot-public
+
+Step 2 — Install dependencies:
+   pip install -r requirements.txt
+
+Step 3 — Create .env file in the project folder:
+   TELEGRAM_TOKEN=your_telegram_token_here
+   MISTRAL_API_KEY=your_mistral_api_key_here
+   SHEET_ID=your_google_sheet_id_here
+   GOOGLE_CREDENTIALS_FILE=credentials.json
+
+Step 4 — Place credentials.json in the same folder as bot.py
+
+Step 5 — Run the bot:
+   python bot.py
+
+Step 6 — Open Telegram, find your bot, send /start
+
+
+================================================================
+PART 6 — DEPLOY TO RENDER (FREE 24/7 HOSTING)
+================================================================
+
+1. Push your code to GitHub:
+   git init
+   git add bot.py requirements.txt README.md .gitignore
+   git commit -m "initial commit"
+   git remote add origin https://github.com/USERNAME/REPO.git
+   git push -u origin main
+
+   NOTE: Make sure .gitignore contains:
+   .env
+   *.json
+
+2. Go to: https://render.com
+3. Sign up with your GitHub account
+4. Click "New" > "Web Service"
+5. Select your repository
+6. Configure:
+   - Runtime: Python
+   - Build Command: pip install -r requirements.txt
+   - Start Command: python bot.py
+
+7. Add Environment Variables (click "Environment"):
+   - TELEGRAM_TOKEN = your token
+   - MISTRAL_API_KEY = your key
+   - SHEET_ID = your sheet id
+   - GOOGLE_CREDENTIALS_FILE = credentials.json
+
+8. Add Secret File (scroll down to "Secret Files"):
+   - Filename: credentials.json
+   - Contents: open credentials.json in Notepad,
+     select all (Ctrl+A), copy (Ctrl+C), paste here
+
+9. Click "Deploy"
+10. Wait 3-5 minutes for the build to complete
+11. Look for: "Your service is live"
+
+
+================================================================
+PART 7 — KEEP BOT ALIVE (PREVENT SLEEP)
+================================================================
+
+Render's free tier sleeps after 15 minutes of inactivity.
+Use UptimeRobot to prevent this:
+
+1. Go to: https://uptimerobot.com
+2. Sign up for free
+3. Click "Add New Monitor"
+4. Select "HTTP(s)"
+5. Enter your Render URL: https://your-app-name.onrender.com
+6. Set interval to: 5 minutes
+7. Save
+
+The bot will now stay awake 24/7.
+
+
+================================================================
+PART 8 — USAGE
+================================================================
+
+Commands:
+- /start    Begin onboarding and set your financial goal
+
+Examples:
+- "I spent 150 on groceries"
+  > Bot logs it and analyzes impact on your goal
+
+- "Remind me at 15:00 to call the bank"
+  > Bot sets a dynamic reminder and sends it at 15:00
+
+- "What's my monthly budget?"
+  > Bot shows your budget breakdown
+
+- "How am I doing this month?"
+  > Bot shows income vs expenses vs goal progress
+
+
+================================================================
+PART 9 — AUTOMATIC NOTIFICATIONS
+================================================================
+
+The bot sends these automatically:
+- Daily at 20:00 — spending check-in reminder
+- 1st of every month — monthly financial report
+- 10th of every month — investment deposit reminder
+
+
+================================================================
+PART 10 — SECURITY
+================================================================
+
+To restrict the bot to specific users only:
+1. Open bot.py in Notepad++
+2. Find: ALLOWED_USERS = set()
+3. Replace with: ALLOWED_USERS = {your_telegram_id}
+
+To find your Telegram ID:
+- Open Telegram
+- Search for @userinfobot
+- Send any message
+- It will reply with your ID
+
+Multiple users:
+ALLOWED_USERS = {123456789, 987654321}
+
+To allow everyone (public):
+ALLOWED_USERS = set()
+
+
+================================================================
+PART 11 — TROUBLESHOOTING
+================================================================
+
+Bot not responding:
+- Check Render logs for errors
+- Make sure TELEGRAM_TOKEN is correct in Render Environment
+- Try Manual Deploy > Clear build cache & deploy
+
+Slow responses (10-30 seconds):
+- This is normal for Mistral Large
+- The bot uses SQLite for fast memory access
+- Google Sheets is used as backup only
+
+Double messages:
+- Make sure the bot is NOT running on your computer
+  while also running on Render
+- Press Ctrl+C in PowerShell to stop local instance
+
+Token errors:
+- Go to @BotFather > /mybots > API Token > Revoke
+- Get a new token
+- Update in Render Environment Variables
+
+Google Sheets errors:
+- Make sure credentials.json is uploaded as Secret File
+- Make sure the sheet is shared with the service account email
+- Make sure Google Sheets API and Google Drive API are enabled
+
+
+================================================================
+PART 12 — TECH STACK
+================================================================
+
+Component         Technology
+---------         ----------
+AI Model          Mistral Small (fast) / Mistral Large (smart)
+Bot Framework     python-telegram-bot
+Local Storage     SQLite (fast, in-memory)
+Cloud Backup      Google Sheets (permanent)
+Hosting           Render.com (free tier)
+Language          Python 3.9+
+Keep Alive        UptimeRobot (free)
+
+
+================================================================
+PART 13 — FILE STRUCTURE
+================================================================
+
+finance-bot/
+   bot.py              Main bot code
+   requirements.txt    Python dependencies
+   README.md           Documentation
+   .gitignore          Files excluded from GitHub
+   .env                Secret keys (NOT uploaded to GitHub)
+   credentials.json    Google credentials (NOT uploaded to GitHub)
+   finance_bot.db      SQLite database (created automatically)
+
+
+================================================================
+PART 14 — REQUIREMENTS.TXT CONTENTS
+================================================================
+
+python-telegram-bot[job-queue]
+httpx
+gspread
+google-auth
+python-dotenv
+
+
+================================================================
+                     END OF INSTRUCTIONS
+================================================================
